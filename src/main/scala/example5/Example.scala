@@ -1,4 +1,4 @@
-package example2
+package example5
 
 import com.jme3.math._
 import java.nio._
@@ -16,8 +16,10 @@ Display a quad on-screen. This code uses:
 
  - a simple vertex and fragment shader;
  - a vertex array;
- - a vertex buffer containing interleaved positions and colours;
- - glDrawArrays to draw the vertex array.
+ - two vertex buffers, one containing positions and one containing colours;
+ - an index buffer;
+ - glDrawElements to draw the array using the index buffer;
+ - a uniform to control the world transform of the quad.
 
 Simplifications:
 
@@ -29,17 +31,28 @@ object Example {
   val WIDTH = 600
   val HEIGHT = 600
 
+  val START_TIME = System.currentTimeMillis
+
   val POS_INDEX = 0
   val COL_INDEX = 1
 
   var programName = 0
   var vertexShaderName = 0
   var fragmentShaderName = 0
+  var projectionMatrixName = 0
+  var viewMatrixName = 0
 
   var vaoName = 0
   var vboName = 0
+  var colName = 0
+  var indicesName = 0
 
-  val FLOAT_BYTES = java.lang.Float.SIZE   / java.lang.Byte.SIZE
+  var cameraX = 0f
+  var cameraY = 0f
+  var cameraZ = 1f
+  var modelYaw = (math.Pi / 4).toFloat
+
+  val FLOAT_BYTES = java.lang.Float.SIZE / java.lang.Byte.SIZE
   val INT_BYTES   = java.lang.Integer.SIZE / java.lang.Byte.SIZE
   val VEC4_BYTES  = 4 * FLOAT_BYTES
 
@@ -47,13 +60,16 @@ object Example {
     """
     #version 150
 
+    uniform mat4 g_viewMatrix;
+    uniform mat4 g_projectionMatrix;
+
     in vec4 in_Position;
     in vec4 in_Color;
     out vec4 ex_Color;
 
     void main(void)
     {
-      gl_Position = in_Position;
+      gl_Position = g_projectionMatrix * (g_viewMatrix * in_Position);
       ex_Color = in_Color;
     }
     """
@@ -72,14 +88,50 @@ object Example {
     """
 
   val vertices = Array[Float](
-    // Bottom right triangle
-    -0.8f, -0.8f,  0.0f,  1.0f, /* bottom left vertex  */ 1.0f,  0.0f,  0.0f,  1.0f, /* bottom left color  - red     */
-     0.8f, -0.8f,  0.0f,  1.0f, /* bottom right vertex */ 0.0f,  1.0f,  0.0f,  1.0f, /* bottom right color - green   */
-     0.8f,  0.8f,  0.0f,  1.0f, /* top right vertex    */ 0.0f,  0.0f,  1.0f,  1.0f, /* top right color    - blue    */
-    // Top left triangle
-    -0.8f, -0.8f,  0.0f,  1.0f, /* bottom left vertex  */ 1.0f,  1.0f,  0.0f,  1.0f, /* bottom left color  - yellow  */
-     0.8f,  0.8f,  0.0f,  1.0f, /* top right vertex    */ 1.0f,  0.0f,  1.0f,  1.0f, /* top right color    - magenta */
-    -0.8f,  0.8f,  0.0f,  1.0f, /* top left vertex     */ 0.0f,  1.0f,  1.0f,  1.0f  /* top left color     - cyan    */
+    -0.8f, -0.8f,  0.0f,  1.0f, /* bottom left vertex  */
+     0.8f, -0.8f,  0.0f,  1.0f, /* bottom right vertex */
+     0.8f,  0.8f,  0.0f,  1.0f, /* top right vertex    */
+    -0.8f,  0.8f,  0.0f,  1.0f  /* top left vertex     */
+  )
+
+  val colors = Array[Float](
+    1.0f,  0.0f,  0.0f,  1.0f, /* bottom left color  - red    */
+    0.0f,  1.0f,  0.0f,  1.0f, /* bottom right color - green  */
+    0.0f,  0.0f,  1.0f,  1.0f, /* top right color    - blue   */
+    1.0f,  1.0f,  0.0f,  1.0f  /* top left color     - yellow */
+  )
+
+  val indices = Array[Int](
+    0, 1, 2,
+    0, 2, 3
+  )
+
+  val identityMatrix = Array[Float](
+    1f, 0f, 0f, 0f,
+    0f, 1f, 0f, 0f,
+    0f, 0f, 1f, 0f,
+    0f, 0f, 0f, 1f
+  )
+
+  val projectionMatrix = Array[Float](
+    1f,  0f,  0f,  0f,
+    0f,  1f,  0f,  0f,
+    0f,  0f,  1f,  0f,
+    0f,  0f, -1f,  0f
+  )
+
+  def rotationMatrix(yaw: Float) = Array[Float](
+     math.cos(yaw).toFloat, 0f, -math.sin(yaw).toFloat, 0f,
+     0f,                    1f,                     0f, 0f,
+    -math.sin(yaw).toFloat, 0f,  math.cos(yaw).toFloat, 0f,
+     0f,                    0f,                     0f, 1f
+  )
+
+  def translationMatrix(x: Float, y: Float, z: Float) = Array[Float](
+    1f, 0f, 0f, -x,
+    0f, 1f, 0f, -y,
+    0f, 0f, 1f, -z,
+    0f, 0f, 0f, 1f
   )
 
   def main(args: Array[String]): Unit = {
@@ -190,6 +242,12 @@ object Example {
     println(programLog("Program ", programName))
     Util.checkGLError()
 
+    viewMatrixName = glGetUniformLocation(programName, "g_viewMatrix")
+    Util.checkGLError()
+
+    projectionMatrixName = glGetUniformLocation(programName, "g_projectionMatrix")
+    Util.checkGLError()
+
     glUseProgram(programName)
     Util.checkGLError()
   }
@@ -227,7 +285,7 @@ object Example {
     glEnableVertexAttribArray(COL_INDEX)
     Util.checkGLError()
 
-    // Vertices and colours:
+    // Vertices:
 
     val verticesFB = createFloatBuffer(vertices.length)
     verticesFB.put(vertices)
@@ -243,10 +301,42 @@ object Example {
     glBufferData(GL_ARRAY_BUFFER, verticesFB, GL_STATIC_DRAW)
     Util.checkGLError()
 
-    glVertexAttribPointer(POS_INDEX, 4, GL_FLOAT, false, 2 * VEC4_BYTES, 0)
+    glVertexAttribPointer(POS_INDEX, 4, GL_FLOAT, false, 0, 0)
     Util.checkGLError()
 
-    glVertexAttribPointer(COL_INDEX, 4, GL_FLOAT, false, 2 * VEC4_BYTES, VEC4_BYTES)
+    // Colors:
+
+    val colorsFB = createFloatBuffer(colors.length)
+    colorsFB.put(colors)
+    colorsFB.rewind()
+    Util.checkGLError()
+
+    colName = glGenBuffers()
+    Util.checkGLError()
+
+    glBindBuffer(GL_ARRAY_BUFFER, colName)
+    Util.checkGLError()
+
+    glBufferData(GL_ARRAY_BUFFER, colorsFB, GL_STATIC_DRAW)
+    Util.checkGLError()
+
+    glVertexAttribPointer(COL_INDEX, 4, GL_FLOAT, false, 0, 0)
+    Util.checkGLError()
+
+    // Indices:
+
+    val indicesFB = createIntBuffer(indices.length)
+    indicesFB.put(indices)
+    indicesFB.rewind()
+    Util.checkGLError()
+
+    indicesName = glGenBuffers()
+    Util.checkGLError()
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indicesName)
+    Util.checkGLError()
+
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indicesFB, GL_STATIC_DRAW)
     Util.checkGLError()
 
     // Clean up (sanity check):
@@ -255,6 +345,9 @@ object Example {
     Util.checkGLError()
 
     glBindBuffer(GL_ARRAY_BUFFER, 0)
+    Util.checkGLError()
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
     Util.checkGLError()
   }
 
@@ -268,7 +361,16 @@ object Example {
     glBindBuffer(GL_ARRAY_BUFFER, 0)
     Util.checkGLError()
 
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+    Util.checkGLError()
+
+    glDeleteBuffers(indicesName)
+    Util.checkGLError()
+
     glDeleteBuffers(vboName)
+    Util.checkGLError()
+
+    glDeleteBuffers(colName)
     Util.checkGLError()
 
     glBindVertexArray(0)
@@ -280,6 +382,7 @@ object Example {
 
   def frame(): Unit = {
     if(Display.isVisible()) {
+      handleKeyboardInput()
       render()
     } else {
       if(Display.isDirty()) {
@@ -296,14 +399,43 @@ object Example {
     Display.sync(60)
   }
 
+  def handleKeyboardInput(): Unit = {
+    if(Keyboard.isKeyDown(Keyboard.KEY_UP   )) cameraZ -= (1f / 60f)
+    if(Keyboard.isKeyDown(Keyboard.KEY_DOWN )) cameraZ += (1f / 60f)
+    if(Keyboard.isKeyDown(Keyboard.KEY_LEFT)) {
+      if(Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT)) {
+        cameraX -= (1f / 60f)
+      } else {
+        modelYaw += (1f / 60f)
+      }
+    }
+    if(Keyboard.isKeyDown(Keyboard.KEY_RIGHT)) {
+      if(Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT)) {
+        cameraX += (1f / 60f)
+      } else {
+        modelYaw -= (1f / 60f)
+      }
+    }
+  }
+
   def render(): Unit = {
-    println("GLTest.render")
+    // println("GLTest.render: camera = (%.2f, %.2f, %.2f)".format(cameraX, cameraY, cameraZ))
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
     Util.checkGLError()
 
     glBindVertexArray(vaoName)
     Util.checkGLError()
+
+    glUniformMatrix4(projectionMatrixName, false, matrixToBuffer(projectionMatrix))
+    glUniformMatrix4(
+      viewMatrixName,
+      false,
+      matrixToBuffer(multiply(
+        translationMatrix(cameraX, cameraY, cameraZ),
+        rotationMatrix(modelYaw)
+      ))
+    )
 
     // glValidateProgram(programName)
     // Util.checkGLError()
@@ -323,11 +455,39 @@ object Example {
     // println("program active uniforms " + glGetProgram(programName, GL_ACTIVE_UNIFORMS))
     // println("vao is a vao " + glIsVertexArray(vaoName))
 
-    glDrawArrays(GL_TRIANGLES, 0, 6)
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0)
     Util.checkGLError()
   }
 
-  // Debugging code:
+  private def matrixToBuffer(in: Array[Float]): FloatBuffer = {
+    val ans = BufferUtils.createFloatBuffer(16)
+
+    for {
+      i <- 0 until 4
+      j <- 0 until 4
+    } ans.put(in(4*j + i))
+
+    ans.rewind()
+
+    ans
+  }
+
+  private def multiply(a: Array[Float], b: Array[Float]): Array[Float] = {
+    val ans = new Array[Float](16)
+
+    for {
+      j <- 0 until 4
+      i <- 0 until 4
+    } {
+      ans(4*j + i) =
+        a(4*j + 0) * b(4*0 + i) +
+        a(4*j + 1) * b(4*1 + i) +
+        a(4*j + 2) * b(4*2 + i) +
+        a(4*j + 3) * b(4*3 + i)
+    }
+
+    ans
+  }
 
   private def shaderLog(preamble: String, location: Int): String = {
     val len = glGetShader(location, GL_INFO_LOG_LENGTH)

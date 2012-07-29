@@ -27,8 +27,8 @@ Simplifications:
 */
 
 object Example {
-  val width = 600
-  val height = 600
+  val WIDTH = 600
+  val HEIGHT = 600
 
   val POS_INDEX = 0
   val COL_INDEX = 1
@@ -113,7 +113,7 @@ object Example {
       withForwardCompatible(true).
       withProfileCore(true)
 
-    Display.setDisplayMode(new DisplayMode(width, height))
+    Display.setDisplayMode(new DisplayMode(WIDTH, HEIGHT))
     Display.setFullscreen(false)
     Display.setTitle("Title")
     Display.create(pixelFormat, contextAttributes)
@@ -131,7 +131,7 @@ object Example {
     glDisable(GL_DEPTH_TEST)
     Util.checkGLError()
 
-    glViewport(0, 0, width, height)
+    glViewport(0, 0, WIDTH, HEIGHT)
     Util.checkGLError()
   }
 
