@@ -1,0 +1,1 @@
+seq(JMonkeyProject.jmonkeySettings : _*)
