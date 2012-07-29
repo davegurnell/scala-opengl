@@ -20,11 +20,6 @@ Display a quad on-screen. This code uses:
  - an index buffer;
  - glDrawElements to draw the array using the index buffer;
  - a uniform to control the world transform of the quad.
-
-Simplifications:
-
- - the shaders ignore the Z coordinate, so what you're seeing is effectively 2D;
- - the shaders don't use uniforms, so you can't easily change the scene each frame.
 */
 
 object Example {
